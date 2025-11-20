@@ -24,6 +24,11 @@ def train(args):
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
 
     model = build_deepsc_ri(num_classes=3, channel_dim=args.channel_dim, pretrained=not args.no_pretrain)
+    if args.no_pretrain is True:
+        print("Training from scratch without ImageNet pretrained weights.")
+        print(f"Loading model {args.save_path} for continued training.")
+        model.load_state_dict(torch.load(args.save_path, map_location=device))
+
     model.set_channel(snr_dB=args.snr, fading=args.fading)
     model.to(device)
 
@@ -65,7 +70,7 @@ def train(args):
 
 def parse_args():
     p = argparse.ArgumentParser(description="Train DeepSC-RI on LISA Traffic Light dataset")
-    p.add_argument('--data-root', required=True, help='Root of LISA dataset containing image folders & Annotations/')
+    p.add_argument('data_root', help='Root of LISA dataset containing image folders & Annotations/')
     p.add_argument('--annotations', default=None, help='Override path to annotations CSV (optional)')
     p.add_argument('--batch-size', type=int, default=32)
     p.add_argument('--epochs', type=int, default=10)
