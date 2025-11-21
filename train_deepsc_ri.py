@@ -1,3 +1,4 @@
+import os
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
@@ -49,7 +50,7 @@ def train(args):
             labels = labels.to(device)
 
             optimizer.zero_grad()
-            logits = model(images)
+            logits, _ = model(images)
             loss = criterion(logits, labels)
             loss.backward()
             optimizer.step()
@@ -62,6 +63,10 @@ def train(args):
         epoch_loss = running_loss / total
         acc = correct / total
         print(f"Epoch {epoch+1}/{args.epochs} - Loss: {epoch_loss:.4f} - Acc: {acc:.4f}")
+        if args.checkpoint_path:
+            os.makedirs(os.path.join(args.checkpoint_path, args.fading), exist_ok=True)
+            with open(os.path.join(args.checkpoint_path, args.fading, 'checkpoint_{}.pth'.format(str(epoch + 1).zfill(2))), 'wb') as f:
+                    torch.save(model.state_dict(), f)
 
     if args.save_path:
         torch.save(model.state_dict(), args.save_path)
@@ -80,6 +85,7 @@ def parse_args():
     p.add_argument('--fading', type=str, default='awgn', choices=['awgn', 'rayleigh'])
     p.add_argument('--no-pretrain', action='store_true', help='Disable ImageNet pretrained weights')
     p.add_argument('--save-path', type=str, default='deepsc_ri_traffic_light.pth')
+    p.add_argument('--checkpoint-path', type=str, default='checkpoints')
     return p.parse_args()
 
 
