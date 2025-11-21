@@ -4,6 +4,7 @@ import pandas as pd
 
 
 def fix_paths(annotation_csv: str, new_path: str):
+    """Update the 'Filename' column in the annotations CSV to have a new root path."""
     df = pd.read_csv(annotation_csv, delimiter=';')
 
     if 'Filename' not in df.columns:
