@@ -5,7 +5,7 @@ import torch
 import tqdm
 
 from traffic_light_dataset import TrafficLightDataset
-from models.deepsc_ri import build_deepsc_ri
+from models.deepsc_ri_classifier import build_deepsc_ri
 from torchvision import transforms
 import matplotlib.pyplot as plt
 import numpy as np
@@ -151,5 +151,5 @@ if __name__ == "__main__":
     ax4 = fig.add_subplot(gs[1,1])
     ax4.plot(rec_feats.cpu().numpy()[0])
     ax4.set_title('Reconstructed Features')
-    
+
     plt.show()

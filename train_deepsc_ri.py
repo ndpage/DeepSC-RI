@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader
 from torchvision import utils as vutils
 import argparse
 from traffic_light_dataset import TrafficLightDataset
-from models.deepsc_ri import build_deepsc_ri
+from models.deepsc_ri_classifier import build_deepsc_ri
 import tqdm
 
 

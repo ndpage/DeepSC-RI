@@ -1,10 +1,11 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import models
 
-
-class DeepSC_RI(nn.Module):
+        
+class DeepSC_RI_Classifier(nn.Module):
     """Image variant of DeepSC (Robust Image) for traffic light classification.
 
     Pipeline:
@@ -72,16 +73,28 @@ class DeepSC_RI(nn.Module):
 
         # Channel encode
         symbols = self.channel_encoder(feats)  # [B, channel_dim]
-        symbols = self._power_normalize(symbols)
-        transmitted = self._apply_channel(symbols)
+        symbols_norm = self._power_normalize(symbols)
+        transmitted = self._apply_channel(symbols_norm)
 
         # Channel decode
         rec_feats = self.channel_decoder(transmitted)  # [B, 512]
 
         # Classification logits
         logits = self.classifier(rec_feats)  # [B, num_classes]
-        return logits
+
+        intermediates = {
+            'input': images.detach(),
+            'feats': feats.detach(),
+            'symbols': symbols.detach(),
+            'symbols_norm': symbols_norm.detach(),
+            'transmitted': transmitted.detach(),
+            'rec_feats': rec_feats.detach(),
+            'logits': logits.detach()
+        }
+        return logits, intermediates
 
 
 def build_deepsc_ri(num_classes: int = 3, channel_dim: int = 64, pretrained: bool = True):
-    return DeepSC_RI(num_classes=num_classes, channel_dim=channel_dim, pretrained=pretrained)
+    return DeepSC_RI_Classifier(num_classes=num_classes, channel_dim=channel_dim, pretrained=pretrained)
+
+
