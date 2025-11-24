@@ -162,28 +162,70 @@ class DecoderLayer(nn.Module):
         x = self.layernorm3(x + fnn_output)
         return x
 
+class FinePatchEmbed(nn.Module):
+    """ 2D Image to Patch Embedding for Fine Features """
+    def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dim=768):
+        super().__init__()
+        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
+        self.grid = img_size // patch_size
     
+    def forward(self, x):
+        x = self.proj(x)  # [B, embed_dim, H/ps, W/ps]
+        x = x.flatten(2).transpose(1, 2)  # [B, N, embed_dim]
+        return x
+
+
+class CoarsePatchEmbed(nn.Module):
+    """ 2D Image to Patch Embedding for Coarse Features """
+    def __init__(self, img_size=224, patch_size=32, in_chans=3, embed_dim=256):
+        super().__init__()
+        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
+        self.grid = img_size // patch_size
+
+    def forward(self, x):
+        x = self.proj(x)                            # [B,embed_dim,grid_c,grid_c]
+        return x.flatten(2).transpose(1, 2)  
+
+
+class FusionModule(nn.Module):
+    """ Fusion Module to combine fine and coarse features """
+    def __init__(self, d_model):
+        super().__init__()
+        self.proj = nn.Linear(d_model * 2, d_model)
+        self.layernorm = nn.LayerNorm(d_model, eps=1e-6)
+
+    def forward(self, fine_feats, coarse_feats):
+        # If sizes differ, repeat coarse features to match fine features
+        if coarse_feats.size(1) != fine_feats.size(1):
+            repeat_times = fine_feats.size(1) // coarse_feats.size(1)
+            coarse_feats = coarse_feats.repeat_interleave(repeat_times, dim=1)
+            if coarse_feats.size(1) > fine_feats.size(1):
+                coarse_feats = coarse_feats[:, :fine_feats.size(1), :]
+        
+        fused = torch.cat([fine_feats, coarse_feats], dim=-1)  # [B, L, 2*d_model]
+        fused = self.proj(fused)
+        output = self.layernorm(fused)
+        return output
+
 class Encoder(nn.Module):
-    "Core encoder is a stack of N layers"
-    def __init__(self, num_layers, num_embed, max_len, 
-                 d_model, num_heads, dff, dropout = 0.1):
+    "Core encoder: Dual layered transformer encoder, fine and coarse feature extraction"
+    def __init__(self, num_layers, max_len, d_model, num_heads, dff, dropout=0.1):
         super(Encoder, self).__init__()
-        
         self.d_model = d_model
-        self.embedding = nn.Embedding(num_embed, d_model)
+
+        self.fine_patch_embed = FinePatchEmbed(img_size=224, patch_size=16, in_chans=3, embed_dim=d_model)
+        self.coarse_patch_embed = CoarsePatchEmbed(img_size=224, patch_size=32, in_chans=3, embed_dim=d_model)
+
         self.pos_encoding = PositionalEncoding(d_model, dropout, max_len)
-        self.enc_layers = nn.ModuleList([EncoderLayer(d_model, num_heads, dff, dropout) 
-                                            for _ in range(num_layers)])
-        
+        self.enc_layers = nn.ModuleList([
+            EncoderLayer(d_model, num_heads, dff, dropout) for _ in range(num_layers)
+        ])
+
     def forward(self, x, src_mask):
-        "Pass the input (and mask) through each layer in turn."
-        # the input size of x is [batch_size, seq_len]
-        x = self.embedding(x) * math.sqrt(self.d_model)
+        "Input x: [B, seq_len, d_model] already embedded"
         x = self.pos_encoding(x)
-        
         for enc_layer in self.enc_layers:
             x = enc_layer(x, src_mask)
-        
         return x
         
 
@@ -201,7 +243,7 @@ class Decoder(nn.Module):
     
     def forward(self, x, memory, look_ahead_mask, trg_padding_mask):
         
-        x = self.embedding(x) * math.sqrt(self.d_model)
+        # x = self.embedding(x) * math.sqrt(self.d_model)
         x = self.pos_encoding(x)
         
         for dec_layer in self.dec_layers:
@@ -236,7 +278,7 @@ class ChannelDecoder(nn.Module):
 class DeepSC_RI(nn.Module):
 
 
-    def __init__(self) -> None:
+    def __init__(self, img_size, patch_size) -> None:
         super().__init__()
 
         # Channel params (can be adjusted via set_channel)
@@ -244,30 +286,29 @@ class DeepSC_RI(nn.Module):
         self.fading = 'awgn'  # 'awgn' or 'rayleigh'
         
         self.num_layers = 2
-        self.num_embeddings = 1000
-        self.src_max_len = 50
+        # Patch embedding settings
+        self.patch_size = 16  # adjust as needed
+        self.src_max_len = (img_size // patch_size) ** 2  # e.g., for 224x224 with 16x16 patches -> (224/16)^2 = 14*14 = 196
         self.img_output_feats = 1000
         self.trg_max_len = 50
         self.d_model = 256
         self.num_heads = 8
         self.dff = 512
         self.dropout = 0.1
-
-        self.encoder = Encoder(self.num_layers, self.num_embeddings, self.src_max_len, 
-                               self.d_model, self.num_heads, self.dff, self.dropout)
+        # Patch embedding projection: Conv2d -> flatten -> linear (if needed)
+        self.patch_embed = nn.Conv2d(3, self.d_model, kernel_size=self.patch_size, stride=self.patch_size)
+        self.encoder = Encoder(self.num_layers, self.src_max_len, self.d_model, self.num_heads, self.dff, self.dropout)
         
         self.channel_encoder = nn.Sequential(nn.Linear(self.d_model, 256), 
-                                             #nn.ELU(inplace=True),
                                              nn.ReLU(inplace=True),
                                              nn.Linear(256, 16))
 
 
         self.channel_decoder = ChannelDecoder(16, self.d_model, 512)
-        
+
         self.decoder = Decoder(self.num_layers, self.img_output_feats, self.trg_max_len, 
                                self.d_model, self.num_heads, self.dff, self.dropout)
         
-        self.dense = nn.Linear(self.d_model, self.img_output_feats)
 
 
 
@@ -293,28 +334,48 @@ class DeepSC_RI(nn.Module):
         self.fading = fading.lower()
 
     def forward(self, images: torch.Tensor):
-        # Encode image
-        feats = self.encoder(images, src_mask=None)  # [B, seq_len, d_model]
-        feats = feats.mean(dim=1)  # Global average pooling over sequence length -> [B, d_model]
+        # Expect images: [B, C, H, W]
+        if images.dim() != 4:
+            raise ValueError(f"Expected images shape [B,C,H,W]; got {images.shape}")
+        B, C, H, W = images.shape
+        # Patch embedding
+        patches = self.patch_embed(images)  # [B, d_model, H/ps, W/ps]
+        patches = patches.flatten(2).transpose(1, 2)  # [B, N, d_model]
+        # If actual N differs from src_max_len, truncate or pad
+        N = patches.size(1)
+        if N < self.src_max_len:
+            pad_len = self.src_max_len - N
+            pad = torch.zeros(B, pad_len, self.d_model, device=patches.device, dtype=patches.dtype)
+            patches = torch.cat([patches, pad], dim=1)
+        elif N > self.src_max_len:
+            patches = patches[:, :self.src_max_len, :]
+
+        feats_seq = self.encoder(patches, src_mask=None)  # [B, src_max_len, d_model]
+        feats = feats_seq.mean(dim=1)  # [B, d_model]
 
         # Channel encode
         symbols = self.channel_encoder(feats)  # [B, channel_dim]
         symbols_norm = self._power_normalize(symbols)
+
+        #### Simulated AWGN / Fading Channel here ####
         transmitted = self._apply_channel(symbols_norm)
-
-        #### Simulate AWGN / Fading Channel here ####
-
+        
         # Channel decode
         rec_feats = self.channel_decoder(transmitted)  # [B, d_model]
         rec_feats = rec_feats.unsqueeze(1).repeat(1, self.trg_max_len, 1)  # [B, trg_max_len, d_model]
-        # Reconstrcution
+        
+        # Decoder
         dec_output = self.decoder(rec_feats, rec_feats, look_ahead_mask=None, trg_padding_mask=None)  # [B, trg_max_len, d_model]
+        
+        # Reconstruction
         logits = self.dense(dec_output)  # [B, trg_max_len, img_output_feats]
 
-        prob = torch.softmax(logits, dim=-1)  # [B, trg_max_len, img_output_feats]
+        # prob = torch.softmax(logits, dim=-1)  # [B, trg_max_len, img_output_feats]
 
-        return prob, {
+        intermediates = {
             'input': images.detach(),
+            'patches': patches.detach(),
+            'feats_seq': feats_seq.detach(),
             'feats': feats.detach(),
             'symbols': symbols.detach(),
             'symbols_norm': symbols_norm.detach(),
@@ -322,16 +383,17 @@ class DeepSC_RI(nn.Module):
             'rec_feats': rec_feats.detach(),
             'logits': logits.detach()
         }
-
+        return logits, intermediates
 
 
 def build_deepsc_ri():
-    return DeepSC_RI()
+    return DeepSC_RI(256, 16)
 
 if __name__ == "__main__":
     # Simple test to build model
     model = build_deepsc_ri()
     print(model)
+    
 
 
 
