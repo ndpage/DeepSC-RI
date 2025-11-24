@@ -94,7 +94,7 @@ class DeepSC_RI_Classifier(nn.Module):
         return logits, intermediates
 
 
-def build_deepsc_ri(num_classes: int = 3, channel_dim: int = 64, pretrained: bool = True):
+def build_deepsc_ri_classifier(num_classes: int = 3, channel_dim: int = 64, pretrained: bool = True):
     return DeepSC_RI_Classifier(num_classes=num_classes, channel_dim=channel_dim, pretrained=pretrained)
 
 
