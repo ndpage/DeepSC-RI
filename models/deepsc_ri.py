@@ -164,10 +164,10 @@ class DecoderLayer(nn.Module):
 
 class FinePatchEmbed(nn.Module):
     """ 2D Image to Patch Embedding for Fine Features """
-    def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dim=768):
+    def __init__(self, img_size=(192, 256), patch_size=16, in_chans=3, embed_dim=256):
         super().__init__()
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
-        self.grid = img_size // patch_size
+        self.grid = (img_size[0] // patch_size, img_size[1] // patch_size)
     
     def forward(self, x):
         x = self.proj(x)  # [B, embed_dim, H/ps, W/ps]
@@ -177,10 +177,10 @@ class FinePatchEmbed(nn.Module):
 
 class CoarsePatchEmbed(nn.Module):
     """ 2D Image to Patch Embedding for Coarse Features """
-    def __init__(self, img_size=224, patch_size=32, in_chans=3, embed_dim=256):
+    def __init__(self, img_size=(192, 256), patch_size=32, in_chans=3, embed_dim=256):
         super().__init__()
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
-        self.grid = img_size // patch_size
+        self.grid = (img_size[0] // patch_size, img_size[1] // patch_size)
 
     def forward(self, x):
         x = self.proj(x)                            # [B,embed_dim,grid_c,grid_c]
@@ -209,41 +209,51 @@ class FusionModule(nn.Module):
 
 class Encoder(nn.Module):
     "Core encoder: Dual layered transformer encoder, fine and coarse feature extraction"
-    def __init__(self, num_layers, max_len, d_model, num_heads, dff, dropout=0.1):
+    def __init__(self, img_size: tuple, fine_patch_size, coarse_patch_size, d_model, num_layers, num_heads, dff, dropout=0.1):
         super(Encoder, self).__init__()
+        H, W = img_size
         self.d_model = d_model
 
-        self.fine_patch_embed = FinePatchEmbed(img_size=224, patch_size=16, in_chans=3, embed_dim=d_model)
-        self.coarse_patch_embed = CoarsePatchEmbed(img_size=224, patch_size=32, in_chans=3, embed_dim=d_model)
+        self.fine_patch_embed = FinePatchEmbed(img_size=img_size, patch_size=fine_patch_size, in_chans=3, embed_dim=d_model)
+        self.coarse_patch_embed = CoarsePatchEmbed(img_size=img_size, patch_size=coarse_patch_size, in_chans=3, embed_dim=d_model)
+        self.fusion = FusionModule(d_model)
 
-        self.pos_encoding = PositionalEncoding(d_model, dropout, max_len)
+        fine_len = (H // fine_patch_size) * (W // fine_patch_size)
+        coarse_len = (H // coarse_patch_size) * (W // coarse_patch_size)
+        fused_len = fine_len  # after coarse alignment to fine length
+
+        self.pos_encoding = PositionalEncoding(d_model, dropout, fused_len)
         self.enc_layers = nn.ModuleList([
             EncoderLayer(d_model, num_heads, dff, dropout) for _ in range(num_layers)
         ])
 
-    def forward(self, x, src_mask):
-        "Input x: [B, seq_len, d_model] already embedded"
-        x = self.pos_encoding(x)
+    def forward(self, images, src_mask=None, return_tokens=False):
+        "Input images: [B, 3, H, W], Output: [B, L, d_model]"
+        fine_feats = self.fine_patch_embed(images)
+        coarse_feats = self.coarse_patch_embed(images)
+        fused_feats = self.fusion(fine_feats, coarse_feats)
+        seq = self.pos_encoding(fused_feats)
         for enc_layer in self.enc_layers:
-            x = enc_layer(x, src_mask)
-        return x
+            seq = enc_layer(seq, src_mask)
+        return seq
         
 
 
 class Decoder(nn.Module):
-    def __init__(self, num_layers, img_output_feats, max_len, 
+    def __init__(self, num_layers, patch_size, max_len, 
                  d_model, num_heads, dff, dropout = 0.1):
         super(Decoder, self).__init__()
         
         self.d_model = d_model
-        self.embedding = nn.Embedding(img_output_feats, d_model)
+
+        self.patch_dim = patch_size * patch_size * 3
+        self.patch_head = nn.Linear(self.d_model, self.patch_dim)
         self.pos_encoding = PositionalEncoding(d_model, dropout, max_len)
         self.dec_layers = nn.ModuleList([DecoderLayer(d_model, num_heads, dff, dropout) 
                                             for _ in range(num_layers)])
     
     def forward(self, x, memory, look_ahead_mask, trg_padding_mask):
         
-        # x = self.embedding(x) * math.sqrt(self.d_model)
         x = self.pos_encoding(x)
         
         for dec_layer in self.dec_layers:
@@ -276,39 +286,60 @@ class ChannelDecoder(nn.Module):
 
 # Developed based on research by Peng et al. "A Robust Semantic Communication System for Image Transmission"
 class DeepSC_RI(nn.Module):
+    """ DeepSC-RI model for robust image reconstruction. """
 
-
-    def __init__(self, img_size, patch_size) -> None:
+    def __init__(self, img_size: tuple, patch_size, d_model=64) -> None:
         super().__init__()
+        H, W = img_size
+        self.src_max_len = (H // patch_size) * (W // patch_size)
 
         # Channel params (can be adjusted via set_channel)
         self.snr_dB = 10.0
         self.fading = 'awgn'  # 'awgn' or 'rayleigh'
-        
         self.num_layers = 2
         # Patch embedding settings
-        self.patch_size = 16  # adjust as needed
-        self.src_max_len = (img_size // patch_size) ** 2  # e.g., for 224x224 with 16x16 patches -> (224/16)^2 = 14*14 = 196
-        self.img_output_feats = 1000
-        self.trg_max_len = 50
-        self.d_model = 256
+        self.patch_size = patch_size  # adjust as needed
+        self.src_max_len = (img_size[0] // patch_size) * (img_size[1] // patch_size)  # e.g., for 224x224 with 16x16 patches -> (224/16)^2 = 14*14 = 196
+        self.img_output_feats = img_size[0] * img_size[1] * 3
+        self.d_model = d_model
         self.num_heads = 8
         self.dff = 512
         self.dropout = 0.1
-        # Patch embedding projection: Conv2d -> flatten -> linear (if needed)
-        self.patch_embed = nn.Conv2d(3, self.d_model, kernel_size=self.patch_size, stride=self.patch_size)
-        self.encoder = Encoder(self.num_layers, self.src_max_len, self.d_model, self.num_heads, self.dff, self.dropout)
+        self.channel_dim = 64
+
+        fine_patch_size = patch_size
+        coarse_patch_size = patch_size * 2
+        self.patch_dim = fine_patch_size * fine_patch_size * 3
+
+        self.trg_max_len = (img_size[0] // self.patch_size) * (img_size[1] // self.patch_size)  # match fine tokens
+        self.query_tokens = nn.Parameter(torch.randn(1, self.trg_max_len, self.d_model))
+
+        self.encoder = Encoder(img_size, fine_patch_size, coarse_patch_size, self.d_model, self.num_layers, self.num_heads, self.dff, self.dropout)
         
-        self.channel_encoder = nn.Sequential(nn.Linear(self.d_model, 256), 
-                                             nn.ReLU(inplace=True),
-                                             nn.Linear(256, 16))
+        # self.channel_encoder = nn.Sequential(nn.Linear(self.d_model, 256), 
+        #                                      nn.ReLU(inplace=True),
+        #                                      nn.Linear(256, 64))
+        
+
+        # self.channel_decoder = ChannelDecoder(64, self.d_model, 512)
+
+        self.channel_encoder = nn.Sequential(
+            nn.Linear(self.d_model, 256),
+            nn.ReLU(inplace=True),
+            nn.Linear(256, self.channel_dim)
+        )
+
+        self.channel_decoder = nn.Sequential(
+            nn.Linear(self.channel_dim, 256),
+            nn.ReLU(inplace=True),
+            nn.Linear(256, self.d_model)
+        )
 
 
-        self.channel_decoder = ChannelDecoder(16, self.d_model, 512)
-
-        self.decoder = Decoder(self.num_layers, self.img_output_feats, self.trg_max_len, 
+        self.decoder = Decoder(self.num_layers, self.patch_size, self.trg_max_len, 
                                self.d_model, self.num_heads, self.dff, self.dropout)
         
+        # self.dense = nn.Linear(self.d_model, self.patch_dim)
 
 
 
@@ -334,64 +365,61 @@ class DeepSC_RI(nn.Module):
         self.fading = fading.lower()
 
     def forward(self, images: torch.Tensor):
-        # Expect images: [B, C, H, W]
+        # Expect images: [B, 3, H, W]
         if images.dim() != 4:
             raise ValueError(f"Expected images shape [B,C,H,W]; got {images.shape}")
         B, C, H, W = images.shape
-        # Patch embedding
-        patches = self.patch_embed(images)  # [B, d_model, H/ps, W/ps]
-        patches = patches.flatten(2).transpose(1, 2)  # [B, N, d_model]
-        # If actual N differs from src_max_len, truncate or pad
-        N = patches.size(1)
-        if N < self.src_max_len:
-            pad_len = self.src_max_len - N
-            pad = torch.zeros(B, pad_len, self.d_model, device=patches.device, dtype=patches.dtype)
-            patches = torch.cat([patches, pad], dim=1)
-        elif N > self.src_max_len:
-            patches = patches[:, :self.src_max_len, :]
-
-        feats_seq = self.encoder(patches, src_mask=None)  # [B, src_max_len, d_model]
+        
+        
+        feats_seq = self.encoder(images, src_mask=None, return_tokens=False)  # [B, src_max_len, d_model]
         feats = feats_seq.mean(dim=1)  # [B, d_model]
 
         # Channel encode
-        symbols = self.channel_encoder(feats)  # [B, channel_dim]
-        symbols_norm = self._power_normalize(symbols)
+        tx_symbols = self.channel_encoder(feats)  # [B, channel_dim]
+        tx_norm = self._power_normalize(tx_symbols)
 
         #### Simulated AWGN / Fading Channel here ####
-        transmitted = self._apply_channel(symbols_norm)
+        rx_symbols = self._apply_channel(tx_norm)
         
         # Channel decode
-        rec_feats = self.channel_decoder(transmitted)  # [B, d_model]
-        rec_feats = rec_feats.unsqueeze(1).repeat(1, self.trg_max_len, 1)  # [B, trg_max_len, d_model]
+        rx_decoded = self.channel_decoder(rx_symbols)  # [B, d_model]
+        # rec_feats = rec_feats.unsqueeze(1).repeat(1, self.trg_max_len, 1)  # [B, trg_max_len, d_model]
+        queries = self.query_tokens.expand(B, -1, -1) + rx_decoded.unsqueeze(1)
         
         # Decoder
-        dec_output = self.decoder(rec_feats, rec_feats, look_ahead_mask=None, trg_padding_mask=None)  # [B, trg_max_len, d_model]
-        
-        # Reconstruction
-        logits = self.dense(dec_output)  # [B, trg_max_len, img_output_feats]
+        dec_output = self.decoder(queries, feats_seq, look_ahead_mask=None, trg_padding_mask=None)  # [B, trg_max_len, d_model]
 
-        # prob = torch.softmax(logits, dim=-1)  # [B, trg_max_len, img_output_feats]
+
+        # Patch reconstruction:
+        patches_flat = self.decoder.patch_head(dec_output)            # [B, L, patch_dim]
+        patches = patches_flat.view(B, self.trg_max_len, 3, self.patch_size, self.patch_size)
+
+        # Reconstruction
+        grid_h = images.size(2) // self.patch_size
+        grid_w = images.size(3) // self.patch_size
+        recon = patches.view(B, grid_h, grid_w, 3, self.patch_size, self.patch_size)\
+                .permute(0, 3, 1, 4, 2, 5)\
+                .contiguous()\
+                .view(B, 3, grid_h * self.patch_size, grid_w * self.patch_size)
 
         intermediates = {
             'input': images.detach(),
-            'patches': patches.detach(),
             'feats_seq': feats_seq.detach(),
             'feats': feats.detach(),
-            'symbols': symbols.detach(),
-            'symbols_norm': symbols_norm.detach(),
-            'transmitted': transmitted.detach(),
-            'rec_feats': rec_feats.detach(),
-            'logits': logits.detach()
+            'tx_symbols': tx_symbols.detach(),
+            'rx_symbols': rx_symbols.detach(),
+            'rx_decoded': rx_decoded.detach(),
+            'patches':patches.detach()
         }
-        return logits, intermediates
+        return recon, intermediates
 
 
-def build_deepsc_ri():
-    return DeepSC_RI(256, 16)
+def build_deepsc_ri(img_size=(192, 256), patch_size=16) -> DeepSC_RI:
+    return DeepSC_RI(img_size, patch_size, d_model=64)
 
 if __name__ == "__main__":
     # Simple test to build model
-    model = build_deepsc_ri()
+    model = build_deepsc_ri(img_size=(192, 256), patch_size=16)
     print(model)
     
 
