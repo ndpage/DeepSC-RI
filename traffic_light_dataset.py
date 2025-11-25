@@ -6,6 +6,51 @@ import torch
 from torch.utils.data import Dataset
 from torchvision import transforms
 
+class ReducedImageTrafficLightDataset(Dataset):
+    """A simple dataset wrapper that reduces images to a smaller size.
+
+    Args:
+        root: Root directory containing images.
+        transform: Optional transform applied to PIL Image.
+        target_transform: Optional transform applied to class index.
+        size: Desired output size as (height, width).
+    """
+
+    def __init__(self,
+                 root: str,
+                 annotation_csv: str,
+                 transform: Optional[Callable] = None,
+                 target_transform: Optional[Callable] = None,
+                 size: tuple = (192, 256)):
+        self.root = root
+        self.annotation_csv = annotation_csv
+        self.transform = transform or transforms.Compose([
+            transforms.Resize(size),
+            transforms.ToTensor()
+        ])
+        self.target_transform = target_transform
+        
+        if not self.annotation_csv:
+            # lisa-traffic-light-dataset/Annotations/Annotations/dayTrain/dayClip1/frameAnnotationsBOX.csv
+            self.annotation_csv = os.path.join(self.root, 'Annotations', 'Annotations', 'dayTrain', 'dayClip1','frameAnnotationsBOX.csv')
+            
+        df = pd.read_csv(self.annotation_csv, delimiter=';')
+        if 'Filename' not in df.columns:
+            raise ValueError("Annotation CSV must contain 'Filename' column.")
+
+        self.samples = df['Filename'].values.tolist()
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+        rel_path = self.samples[idx]
+        img_path = os.path.join(self.root, rel_path)
+        with Image.open(img_path) as image:
+            img_rgb = image.convert('RGB')
+            img_transform: torch.Tensor = self.transform(img_rgb)
+            orig_img_tensor: torch.Tensor = transforms.ToTensor()(image)
+        return img_transform, orig_img_tensor
 
 class TrafficLightDataset(Dataset):
     """LISA Traffic Light Dataset wrapper.
@@ -92,3 +137,10 @@ if __name__ == "__main__":
     print(dataset)
     img, label = dataset[0]
     # print(f"Image: {img.shape} --> Label: {label}")
+
+    reduces_ds = ReducedImageTrafficLightDataset(root='./lisa-traffic-light-dataset',
+                                                  annotation_csv='./lisa-traffic-light-dataset/Annotations/Annotations/dayTrain/dayClip1/frameAnnotationsBOX.csv', 
+                                                  size=(192, 256))
+    
+    reduced_img, orig_img = reduces_ds[0]
+    print(f"Original Image Size: {orig_img.shape} --> Reduced Image Shape: {reduced_img.shape}")
