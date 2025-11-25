@@ -291,7 +291,6 @@ class DeepSC_RI(nn.Module):
     def __init__(self, img_size: tuple, patch_size, d_model=64) -> None:
         super().__init__()
         H, W = img_size
-        self.src_max_len = (H // patch_size) * (W // patch_size)
 
         # Channel params (can be adjusted via set_channel)
         self.snr_dB = 10.0
@@ -299,7 +298,6 @@ class DeepSC_RI(nn.Module):
         self.num_layers = 2
         # Patch embedding settings
         self.patch_size = patch_size  # adjust as needed
-        self.src_max_len = (img_size[0] // patch_size) * (img_size[1] // patch_size)  # e.g., for 224x224 with 16x16 patches -> (224/16)^2 = 14*14 = 196
         self.img_output_feats = img_size[0] * img_size[1] * 3
         self.d_model = d_model
         self.num_heads = 8
@@ -407,8 +405,11 @@ class DeepSC_RI(nn.Module):
             'feats_seq': feats_seq.detach(),
             'feats': feats.detach(),
             'tx_symbols': tx_symbols.detach(),
+            'tx_norm': tx_norm.detach(),
             'rx_symbols': rx_symbols.detach(),
             'rx_decoded': rx_decoded.detach(),
+            'queries': queries.detach(),
+            'dec_output': dec_output.detach(),
             'patches':patches.detach()
         }
         return recon, intermediates

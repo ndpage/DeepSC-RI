@@ -6,10 +6,13 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import utils as vutils
+from torchvision.transforms import Resize, Compose, ToTensor, ToPILImage
 from traffic_light_dataset import ReducedImageTrafficLightDataset
 import tqdm
 from utils.devices import get_device
 import matplotlib.pyplot as plt
+
+from utils.visualize import to_numpy_image
 
 
 
@@ -18,16 +21,18 @@ def train(args):
     print("Using device:", device)
 
     # Dataset initializes with training images and resizes them to 192x256 (HxW)
-    img_size = (192, 256)
-    dataset = ReducedImageTrafficLightDataset(root=args.data_root, annotation_csv=args.annotations, size=img_size)
+    img_size = (960, 1280)
+    reduced_size = (img_size[0]//2, img_size[1]//2)  # Reduced size for training (HxW)
+    dataset = ReducedImageTrafficLightDataset(root=args.data_root, annotation_csv=args.annotations, size=reduced_size)
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
-    print(f"Dataset contains {len(dataset)} images resized to {img_size}")
-    # img = to_numpy_image(dataset[0])  # test
-    # plt.imshow(img)
-    # plt.title("Sample resized image from dataset")
-    # plt.show()
+    transform = Compose([
+            ToPILImage(),
+            Resize(img_size),
+            ToTensor()
+        ])
+    print(f"Dataset contains {len(dataset)} images resized to {reduced_size}")
 
-    model = build_deepsc_ri(img_size=img_size, patch_size=16)
+    model = build_deepsc_ri(img_size=reduced_size, patch_size=16)
     model.set_channel(snr_dB=args.snr, fading=args.fading)
     model.to(device)
     # model.eval()
@@ -35,7 +40,7 @@ def train(args):
     # Research utilizes combination of cross-entropy loss and MSE loss for reconstruction task
     cel = nn.CrossEntropyLoss()
     mse = nn.MSELoss()
-    alpha = 0.05  # weight for MSE loss
+    alpha = 0.1  # weight for MSE loss
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     # plt.figure(figsize=(12, 8))
@@ -55,7 +60,8 @@ def train(args):
             line,  = plt.plot(x, y)
             plt.xlabel("loader iterations")
             plt.ylabel("Loss (log scale)")
-        for reduced_img, orig_img in pbar:
+
+        for reduced_images, orig_images in pbar:
             desc=f"Epoch {epoch+1}/{args.epochs}: {running_loss/len(loader):.4f}"
             pbar.set_description(desc)
             
@@ -68,22 +74,23 @@ def train(args):
                 plt.pause(0.01)
 
             # Send to device
-            reduced_img = reduced_img.to(device)
-            orig_img = orig_img.to(device)
+            reduced_images = reduced_images.to(device)
+            orig_images = orig_images.to(device)
 
             optimizer.zero_grad()
-            rec_image, intermediates = model(reduced_img)
+            rec_images, intermediates = model(reduced_images)
 
-            # Upscale reconstructed image to original size for loss computation
-            upscaled_size = (orig_img.shape[2], orig_img.shape[3])
-            rec_image = nn.functional.interpolate(rec_image, size=upscaled_size, mode='bilinear', align_corners=False)
+            # # Resize reconstructed image to original size for loss computation
+            # rec_image_full = torch.stack([
+            #     transform(rec_image[i].cpu()) for i in range(rec_image.size(0))
+            # ]).to(device)
             
             tx_symbols = intermediates['tx_symbols']
             rx_decoded = intermediates['rx_decoded']
 
             # Compute losses according to L_total = L_CE(Iu, ˆI) + α · L_MSE(Tx, Rx),
             mse_loss = mse(rx_decoded, tx_symbols)
-            ce_loss = cel(rec_image, orig_img)
+            ce_loss = cel(rec_images, reduced_images)
             loss = ce_loss + alpha * mse_loss
             loss.backward()
             optimizer.step()
