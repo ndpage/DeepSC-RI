@@ -5,11 +5,12 @@ import torch
 import tqdm
 
 from traffic_light_dataset import TrafficLightDataset
-from models.deepsc_ri_classifier import build_deepsc_ri
+from models.deepsc_ri_classifier import build_deepsc_ri_classifier
 from torchvision import transforms
 import matplotlib.pyplot as plt
 import numpy as np
 from utils.devices import get_device
+from utils.visualize import to_numpy_image
 
 
 def inference(model_path: str, data_root: str, annotation_csv: str, snr_dB: float, fading: str, channel_dim: int):
@@ -17,7 +18,7 @@ def inference(model_path: str, data_root: str, annotation_csv: str, snr_dB: floa
     print("Using device:", device)
 
     dataset = TrafficLightDataset(root=data_root, annotation_csv=annotation_csv)
-    model = build_deepsc_ri(num_classes=3, channel_dim=channel_dim, pretrained=False)
+    model = build_deepsc_ri_classifier(num_classes=3, channel_dim=channel_dim, pretrained=False)
     model.set_channel(snr_dB=snr_dB, fading=fading)
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.to(device)
@@ -66,70 +67,72 @@ if __name__ == "__main__":
     parser.add_argument('--snr', type=float, default=10.0, help='SNR in dB for the channel model')
     parser.add_argument('--channel-dim', type=int, default=64, help='Channel dimension for DeepSC-RI model')
     parser.add_argument('--fading', choices=['awgn', 'rayleigh'], default='awgn', help='Channel fading model')
+    parser.add_argument('--image-index', type=int, default=0, help='Index of the image in the dataset to perform single image inference on')
     args = parser.parse_args()
 
-    acc, gt, preds, inter = inference(
-        model_path=args.model_path,
-        data_root=args.data_root,
-        annotation_csv=args.annotations,
-        snr_dB=args.snr,
-        fading=args.fading,
-        channel_dim=args.channel_dim
-    )
-    
-    print(f"Inference Accuracy: {acc:.4f}%")
+    if not args.image_index:
+        acc, gt, preds, inter = inference(
+            model_path=args.model_path,
+            data_root=args.data_root,
+            annotation_csv=args.annotations,
+            snr_dB=args.snr,
+            fading=args.fading,
+            channel_dim=args.channel_dim
+        )    
+        print(f"Inference Accuracy: {acc:.4f}%")
+    else:
+        # Perform inference on a single sample and visualize
+        ds = TrafficLightDataset(root=args.data_root, annotation_csv=args.annotations)
+        sample_img, label = ds[args.image_index - 1]
 
-    # Perform inference on a single sample and visualize
-    ds = TrafficLightDataset(root=args.data_root, annotation_csv=args.annotations)
-    sample_img, label = ds[9]
+        pred_value, intermediates = inference_single_image(
+            model=build_deepsc_ri_classifier(num_classes=3, channel_dim=args.channel_dim, pretrained=False).to(get_device()),
+            image_tensor=sample_img,
+            device=get_device()
+        )
 
-    pred_value, intermediates = inference_single_image(
-        model=build_deepsc_ri(num_classes=3, channel_dim=args.channel_dim, pretrained=False).to(get_device()),
-        image_tensor=sample_img,
-        device=get_device()
-    )
+        input = intermediates['input']
+        logits = intermediates['logits']
+        symbols = intermediates['symbols']
+        symbols_norm = intermediates['symbols_norm']
+        transmitted = intermediates['transmitted']
+        rec_feats = intermediates['rec_feats']
 
-    input = intermediates['input']
-    logits = intermediates['logits']
-    symbols = intermediates['symbols']
-    symbols_norm = intermediates['symbols_norm']
-    transmitted = intermediates['transmitted']
-    rec_feats = intermediates['rec_feats']
+        print(f"Logits: {logits.shape}")
+        print(f"Symbols: {symbols.shape}")
+        print(f"Transmitted symbols: {transmitted.shape}")
+        print(f"Reconstructed features: {rec_feats.shape}")
 
-    print(f"Logits: {logits.shape}")
-    print(f"Symbols: {symbols.shape}")
-    print(f"Transmitted symbols: {transmitted.shape}")
-    print(f"Reconstructed features: {rec_feats.shape}")
+        print(f"Single Image Prediction: {pred_value}, Ground Truth: {label}")
+        probs = torch.softmax(logits, dim=1)
+        sample_img_np = to_numpy_image(sample_img)
 
-    print(f"Single Image Prediction: {pred_value}, Ground Truth: {label}")
 
-    fig = plt.figure(figsize=(12,8))
-    fig.suptitle(f"DeepSC-RI Inference - SNR: {args.snr} dB, Fading: {args.fading.upper()}", fontsize=16, fontweight='bold')
-    gs = fig.add_gridspec(2,2)
-    ax1 = fig.add_subplot(gs[0,0])
-    
-    sample_img: torch.Tensor = input.cpu()
-    sample_img_np = to_numpy_image(sample_img)
+        fig = plt.figure(figsize=(12,8))
+        fig.suptitle(f"DeepSC-RI Inference - SNR: {args.snr} dB, Fading: {args.fading.upper()}", fontsize=16, fontweight='bold')
+        gs = fig.add_gridspec(2,2)
 
-    ax1.imshow(sample_img_np)
-    ax1.set_title('Image for Inference')
-    ax1.margins(x=0, y=0.1)
+        ax1 = fig.add_subplot(gs[0,0])
+        ax1.imshow(sample_img_np)
+        ax1.set_title('Image for Inference')
+        ax1.margins(x=0, y=0.1)
 
-    ax2 = fig.add_subplot(gs[0,1])
-    ax2.plot(symbols.cpu().numpy()[0], marker='o', linestyle='-', label='Original Symbols')
-    ax2.plot(symbols_norm.cpu().numpy()[0], marker='x', linestyle='--', label='Normalized Symbols')
-    ax2.plot(transmitted.cpu().numpy()[0], marker='.', linestyle=':', label='Transmitted Symbols')
-    ax2.set_title('Channel Symbols')
-    ax2.legend(['Original Symbols', 'Normalized Symbols', 'Transmitted Symbols'], fontsize=8)
-    ax2.margins(x=0, y=0.05)
+        ax2 = fig.add_subplot(gs[0,1])
+        ax2.plot(symbols.cpu().numpy()[0], marker='o', linestyle='-', label='Original Symbols')
+        ax2.plot(symbols_norm.cpu().numpy()[0], marker='x', linestyle='--', label='Normalized Symbols')
+        ax2.plot(transmitted.cpu().numpy()[0], marker='.', linestyle=':', label='Transmitted Symbols')
+        ax2.set_title('Channel Symbols')
+        ax2.legend(['Original Symbols', 'Normalized Symbols', 'Transmitted Symbols'], fontsize=8)
+        ax2.margins(x=0, y=0.05)
 
-    probs = torch.softmax(logits, dim=1)
-    ax3 = fig.add_subplot(gs[1,0])
-    ax3.bar(np.arange(probs.shape[1]), probs.cpu().numpy()[0])
-    ax3.set_title('logits Distribution')
+        ax3 = fig.add_subplot(gs[1,0])
+        ax3.bar(["red", "yellow", "green"], 100.0 * probs.cpu().numpy()[0])
+        ax3.set_title('Probabilities (%)')
 
-    ax4 = fig.add_subplot(gs[1,1])
-    ax4.plot(rec_feats.cpu().numpy()[0])
-    ax4.set_title('Reconstructed Features')
+        ax4 = fig.add_subplot(gs[1,1])
+        ax4.plot(rec_feats.cpu().numpy()[0])
+        ax4.set_title('Reconstructed Features')
 
-    plt.show()
+        fig.text(0.45, 0.01, f"Prediction: {pred_value}, Ground Truth: {label}", ha='center', fontsize=12)
+
+        plt.show()

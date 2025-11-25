@@ -21,7 +21,7 @@ class DeepSC_RI_Classifier(nn.Module):
 
     def __init__(self, num_classes: int = 3, channel_dim: int = 64, pretrained: bool = True):
         super().__init__()
-        base = models.resnet18(pretrained=pretrained)
+        base = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1 if pretrained else None)
         # Remove the final FC and keep avgpool; we'll flatten after forward.
         modules = list(base.children())[:-1]  # until avgpool
         self.encoder = nn.Sequential(*modules)  # output shape: [B, 512, 1, 1]

@@ -13,7 +13,8 @@ import tqdm
 def train(args):
     device = get_device()
     print("Using device:", device)
-
+    img_size = (960, 1280)
+    reduced_size = (img_size[0]//2, img_size[1]//2)
     dataset = TrafficLightDataset(root=args.data_root, annotation_csv=args.annotations)
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
 

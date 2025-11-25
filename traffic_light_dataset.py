@@ -21,7 +21,7 @@ class ReducedImageTrafficLightDataset(Dataset):
                  annotation_csv: str,
                  transform: Optional[Callable] = None,
                  target_transform: Optional[Callable] = None,
-                 size: tuple = (192, 256)):
+                 size: tuple = (960//2, 1280//2)):
         self.root = root
         self.annotation_csv = annotation_csv
         self.transform = transform or transforms.Compose([
@@ -79,7 +79,8 @@ class TrafficLightDataset(Dataset):
                  annotation_csv: Optional[str] = None,
                  transform: Optional[Callable] = None,
                  target_transform: Optional[Callable] = None,
-                 class_map: Optional[dict] = None):
+                 class_map: Optional[dict] = None,
+                 size: tuple = (960//2, 1280//2)):
         self.root = root
         if annotation_csv is None:
             # Try common filename
@@ -89,7 +90,7 @@ class TrafficLightDataset(Dataset):
             annotation_csv = candidate
         self.annotation_csv = annotation_csv
         self.transform = transform or transforms.Compose([
-            transforms.Resize((224, 224)),
+            transforms.Resize(size),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
