@@ -13,15 +13,15 @@ from utils.visualize import to_numpy_image
 from torchvision.transforms import Resize
 
 
-def inference(model_path: str, data_root: str, annotation_csv: str, snr_dB: float, fading: str, channel_dim: int):
+def inference(args):
     device = get_device()
     print("Using device:", device)
     size = (960, 1280)
     reduced = (size[0]//2, size[1]//2)
-    dataset = ReducedImageTrafficLightDataset(root=data_root, annotation_csv=annotation_csv, size=reduced)
+    dataset = ReducedImageTrafficLightDataset(root=args.data_root, annotation_csv=args.annotations, size=reduced)
     model = build_deepsc_ri(img_size=reduced, patch_size=16)
-    model.set_channel(snr_dB=snr_dB, fading=fading)
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.set_channel(snr_dB=args.snr, fading=args.fading)
+    model.load_state_dict(torch.load(args.model_path, map_location=device))
     model.to(device)
     model.eval()
 
@@ -31,28 +31,29 @@ def inference(model_path: str, data_root: str, annotation_csv: str, snr_dB: floa
     ground_truths = []
     reconstructions = []
     with torch.no_grad():
-        pbar: ReducedImageTrafficLightDataset = tqdm.tqdm(dataset, desc="Inference", leave=False)
-        for img, orig_img in pbar:
+        pbar = tqdm.tqdm(dataset, desc="Inference", leave=False)
+        for img, original_img in pbar:
+            pbar.set_description(f"Inference: {correct}/{total} Acc: {100.0 * correct / max(total,1):.2f}%")
             img = img.to(device)
-            orig_img = orig_img.to(device)
+            img = img.unsqueeze(0)  # add batch dimension
+            original_img = original_img.to(device)
+            original_img = original_img.unsqueeze(0)  # add batch dimension
 
             recnst_img, intermediates = model(img)
-            # For reconstruction accuracy, we can use MSE between orig_img and recnst_img
-            mse_loss = torch.mean((recnst_img - orig_img) ** 2, dim=[1,2,3])
-            # recon_error = (mse_loss < 0.01).long()  # threshold for reconstruction success
-            # label = torch.tensor([1 if torch.mean((orig_img - img) ** 2) < 0.01 else 0]).to(device)
+            # For reconstruction accuracy, we can use MSE between img and recnst_img
+            mse_loss = torch.mean((recnst_img - img) ** 2, dim=[1,2,3])
+            recon_error = (mse_loss < 0.1).long()  # threshold for reconstruction success
 
-            # correct += (pred == label).sum().item()
-            # total += label.size(0)
+            correct += recon_error.sum().item()
+            total += img.size(0)
 
-            ground_truths.append(orig_img.cpu().item())
-            reconstructions.append(recnst_img.cpu().item())
+            ground_truths.append(img.cpu())
+            reconstructions.append(recnst_img.cpu())
 
-    # accuracy = correct / total
-    # accuracy = accuracy * 100.0
-    accuracy = 0.0  # Placeholder as reconstruction accuracy is not computed here
+    accuracy = correct / total
+    accuracy = accuracy * 100.0
 
-    return accuracy, ground_truths, reconstructions, intermediates
+    return accuracy, reconstructions, intermediates
 
 def inference_single_image(args):
     # Perform inference on a single sample and visualize
@@ -72,8 +73,8 @@ def inference_single_image(args):
     original_img_tensor = original_img_tensor.unsqueeze(0).to(device)
     with torch.no_grad():
         rec_image, inter = model(image_tensor)
-        upscaled_size = (original_img_tensor.shape[2], original_img_tensor.shape[3])
-        rec_image = nn.functional.interpolate(rec_image, size=upscaled_size, mode='bilinear', align_corners=False)
+        # upscaled_size = (original_img_tensor.shape[2], original_img_tensor.shape[3])
+        # rec_image = nn.functional.interpolate(rec_image, size=upscaled_size, mode='bilinear', align_corners=False)
     return rec_image, inter
 
 if __name__ == "__main__":
@@ -89,64 +90,58 @@ if __name__ == "__main__":
     parser.add_argument('--image-index', type=int, default=0, help='Index of the image in the dataset to perform inference on')
     args = parser.parse_args()
 
-    # acc, gt, preds, inter = inference(
-    #     model_path=args.model_path,
-    #     data_root=args.data_root,
-    #     annotation_csv=args.annotations,
-    #     snr_dB=args.snr,
-    #     fading=args.fading,
-    #     channel_dim=args.channel_dim
-    # )
-    
-    # print(f"Inference Accuracy: {acc:.4f}%")
+    if args.image_index == 0:
+        acc, reconstructions, inter = inference(args)
+        print(f"Inference Accuracy: {acc:.4f}%")
 
-    recon_img, intermediates = inference_single_image(args)
+    else:
+        recon_img, intermediates = inference_single_image(args)
 
-    input = intermediates['input']
-    feats_seq = intermediates['feats_seq']
-    tx_symbols = intermediates['tx_symbols']
-    tx_norm = intermediates['tx_norm']
-    rx_symbols = intermediates['rx_symbols']
-    dec_symbols = intermediates['dec_output']
+        input = intermediates['input']
+        feats_seq = intermediates['feats_seq']
+        tx_symbols = intermediates['tx_symbols']
+        tx_norm = intermediates['tx_norm']
+        rx_symbols = intermediates['rx_symbols']
+        dec_symbols = intermediates['dec_output']
 
-    original_img: torch.Tensor = input.cpu()
+        original_img: torch.Tensor = input.cpu()
 
-    # resize_transform = Resize((960, 1280)) # Specify desired output size
-    # resized_tensor = resize_transform(original_img)
-    # resized_img = to_numpy_image(recon_img)
+        # resize_transform = Resize((960, 1280)) # Specify desired output size
+        # resized_tensor = resize_transform(original_img)
+        # resized_img = to_numpy_image(recon_img)
 
-    reconstructed_img = to_numpy_image(recon_img)
-    original_img = to_numpy_image(original_img)
+        reconstructed_img = to_numpy_image(recon_img)
+        original_img = to_numpy_image(original_img)
 
-    fig = plt.figure(figsize=(13,8))
-    fig.suptitle(f"DeepSC-RI Inference - SNR: {args.snr} dB, Fading: {args.fading.upper()}", fontsize=14, fontweight='bold')
-    gs = fig.add_gridspec(2,2, hspace=0.4, wspace=0.2)
+        fig = plt.figure(figsize=(11,8))
+        fig.suptitle(f"DeepSC-RI Inference - SNR: {args.snr} dB, Fading: {args.fading.upper()}", fontsize=14, fontweight='bold')
+        gs = fig.add_gridspec(2,2, hspace=0.4, wspace=0.2)
 
-    ax1 = fig.add_subplot(gs[0,0])
-    ax1.imshow(original_img)
-    ax1.set_title('Image for Inference')
-    ax1.set_xlabel('Width (pixels)')
-    ax1.set_ylabel('Height (pixels)')
+        ax1 = fig.add_subplot(gs[0,0])
+        ax1.imshow(original_img)
+        ax1.set_title('Image for Inference')
+        ax1.set_xlabel('Width (pixels)')
+        ax1.set_ylabel('Height (pixels)')
 
-    ax2 = fig.add_subplot(gs[0,1])
-    ax2.plot(tx_symbols.cpu().numpy()[0], marker='o', label='Original Symbols')
-    ax2.plot(rx_symbols.cpu().numpy()[0], marker='x', label='Transmitted Symbols')
-    ax2.set_title('Channel Symbols')
-    ax2.legend(['Transmitted Symbols', 'Received Symbols'], fontsize=8)
-    ax2.set_xlabel('Symbol Index')
-    ax2.set_ylabel('Symbol Value')
-    # ax2.margins(x=0, y=0.1)
+        ax2 = fig.add_subplot(gs[0,1])
+        ax2.plot(tx_symbols.cpu().numpy()[0], marker='o', label='Original Symbols')
+        ax2.plot(rx_symbols.cpu().numpy()[0], marker='x', label='Transmitted Symbols')
+        ax2.set_title('Channel Symbols')
+        ax2.legend(['Transmitted Symbols', 'Received Symbols'], fontsize=8)
+        ax2.set_xlabel('Symbol Index')
+        ax2.set_ylabel('Symbol Value')
+        # ax2.margins(x=0, y=0.1)
 
-    ax3 = fig.add_subplot(gs[1,0])
-    ax3.imshow(reconstructed_img)
-    ax3.set_title('Reconstructed Image')
-    ax3.set_xlabel('Width (pixels)')
-    ax3.set_ylabel('Height (pixels)')
+        ax3 = fig.add_subplot(gs[1,0])
+        ax3.imshow(reconstructed_img)
+        ax3.set_title('Reconstructed Image')
+        ax3.set_xlabel('Width (pixels)')
+        ax3.set_ylabel('Height (pixels)')
 
-    ax4 = fig.add_subplot(gs[1,1])
-    ax4.plot(dec_symbols.cpu().numpy()[0])
-    ax4.set_title('Decoded Features')
-    ax4.set_xlabel('Feature Index')
-    ax4.set_ylabel('Feature Value')
+        ax4 = fig.add_subplot(gs[1,1])
+        ax4.plot(dec_symbols.cpu().numpy()[0])
+        ax4.set_title('Decoded Features')
+        ax4.set_xlabel('Feature Index')
+        ax4.set_ylabel('Feature Value')
 
-    plt.show()
+        plt.show()
