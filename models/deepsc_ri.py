@@ -211,15 +211,15 @@ class Encoder(nn.Module):
     "Core encoder: Dual layered transformer encoder, fine and coarse feature extraction"
     def __init__(self, img_size: tuple, fine_patch_size, coarse_patch_size, d_model, num_layers, num_heads, dff, dropout=0.1):
         super(Encoder, self).__init__()
-        H, W = img_size
+        h, w = img_size
         self.d_model = d_model
 
         self.fine_patch_embed = FinePatchEmbed(img_size=img_size, patch_size=fine_patch_size, in_chans=3, embed_dim=d_model)
         self.coarse_patch_embed = CoarsePatchEmbed(img_size=img_size, patch_size=coarse_patch_size, in_chans=3, embed_dim=d_model)
         self.fusion = FusionModule(d_model)
 
-        fine_len = (H // fine_patch_size) * (W // fine_patch_size)
-        coarse_len = (H // coarse_patch_size) * (W // coarse_patch_size)
+        fine_len = (h // fine_patch_size) * (w // fine_patch_size)
+        coarse_len = (h // coarse_patch_size) * (w // coarse_patch_size)
         fused_len = fine_len  # after coarse alignment to fine length
 
         self.pos_encoding = PositionalEncoding(d_model, dropout, fused_len)
@@ -288,9 +288,10 @@ class ChannelDecoder(nn.Module):
 class DeepSC_RI(nn.Module):
     """ DeepSC-RI model for robust image reconstruction. """
 
-    def __init__(self, img_size: tuple, patch_size, d_model=64) -> None:
+    def __init__(self, img_size: tuple, patch_size, d_model=64, channel_dim=64) -> None:
         super().__init__()
-        H, W = img_size
+        h, w = img_size
+        print(f"Initializing DeepSC-RI with image size: {h}x{w}, patch size: {patch_size}, d_model: {d_model}, channel_dim: {channel_dim}")
 
         # Channel params (can be adjusted via set_channel)
         self.snr_dB = 10.0
@@ -303,7 +304,7 @@ class DeepSC_RI(nn.Module):
         self.num_heads = 8
         self.dff = 512
         self.dropout = 0.1
-        self.channel_dim = 64
+        self.channel_dim = channel_dim
 
         fine_patch_size = patch_size
         coarse_patch_size = patch_size * 2
@@ -333,12 +334,10 @@ class DeepSC_RI(nn.Module):
             nn.Linear(256, self.d_model)
         )
 
-
+        # Semantic Decoder
         self.decoder = Decoder(self.num_layers, self.patch_size, self.trg_max_len, 
                                self.d_model, self.num_heads, self.dff, self.dropout)
         
-        # self.dense = nn.Linear(self.d_model, self.patch_dim)
-
 
 
     def _power_normalize(self, x: torch.Tensor) -> torch.Tensor:
@@ -415,15 +414,10 @@ class DeepSC_RI(nn.Module):
         return recon, intermediates
 
 
-def build_deepsc_ri(img_size=(192, 256), patch_size=16) -> DeepSC_RI:
-    return DeepSC_RI(img_size, patch_size, d_model=64)
-
+def build_deepsc_ri(img_size=(192, 256), patch_size=16, channel_dim=64) -> DeepSC_RI:
+    return DeepSC_RI(img_size, patch_size, d_model=64, channel_dim=channel_dim)
 if __name__ == "__main__":
     # Simple test to build model
-    model = build_deepsc_ri(img_size=(192, 256), patch_size=16)
+    model = build_deepsc_ri(img_size=(192, 256), patch_size=16, channel_dim=64)
     print(model)
     
-
-
-
-
