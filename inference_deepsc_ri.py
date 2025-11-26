@@ -59,7 +59,7 @@ def inference_single_image(args):
     size = (960, 1280)
     reduced = (size[0]//2, size[1]//2)
     ds = ReducedImageTrafficLightDataset(root=args.data_root, annotation_csv=args.annotations, size=reduced)
-    image_tensor, original_img_tensor = ds[0]
+    image_tensor, original_img_tensor = ds[args.image_index]
     print(f"Sample: {image_tensor.shape}, Original: {original_img_tensor.shape}")
     
     model = build_deepsc_ri(img_size=reduced, patch_size=16)
@@ -86,6 +86,7 @@ if __name__ == "__main__":
     parser.add_argument('--snr', type=float, default=10.0, help='SNR in dB for the channel model')
     parser.add_argument('--channel-dim', type=int, default=64, help='Channel dimension for DeepSC-RI model')
     parser.add_argument('--fading', choices=['awgn', 'rayleigh'], default='awgn', help='Channel fading model')
+    parser.add_argument('--image-index', type=int, default=0, help='Index of the image in the dataset to perform inference on')
     args = parser.parse_args()
 
     # acc, gt, preds, inter = inference(
@@ -103,42 +104,49 @@ if __name__ == "__main__":
 
     input = intermediates['input']
     feats_seq = intermediates['feats_seq']
+    tx_symbols = intermediates['tx_symbols']
     tx_norm = intermediates['tx_norm']
-    transmitted = intermediates['rx_symbols']
+    rx_symbols = intermediates['rx_symbols']
     dec_symbols = intermediates['dec_output']
 
-    fig = plt.figure(figsize=(12,8))
-    fig.suptitle(f"DeepSC-RI Inference - SNR: {args.snr} dB, Fading: {args.fading.upper()}", fontsize=16, fontweight='bold')
-    gs = fig.add_gridspec(2,2)
-    ax1 = fig.add_subplot(gs[0,0])
-    
     original_img: torch.Tensor = input.cpu()
 
     # resize_transform = Resize((960, 1280)) # Specify desired output size
     # resized_tensor = resize_transform(original_img)
     # resized_img = to_numpy_image(recon_img)
 
-    reconstructed = to_numpy_image(recon_img)
+    reconstructed_img = to_numpy_image(recon_img)
     original_img = to_numpy_image(original_img)
 
+    fig = plt.figure(figsize=(13,8))
+    fig.suptitle(f"DeepSC-RI Inference - SNR: {args.snr} dB, Fading: {args.fading.upper()}", fontsize=14, fontweight='bold')
+    gs = fig.add_gridspec(2,2, hspace=0.4, wspace=0.2)
+
+    ax1 = fig.add_subplot(gs[0,0])
     ax1.imshow(original_img)
     ax1.set_title('Image for Inference')
-    ax1.margins(x=0, y=0.1)
+    ax1.set_xlabel('Width (pixels)')
+    ax1.set_ylabel('Height (pixels)')
 
     ax2 = fig.add_subplot(gs[0,1])
-    ax2.plot(feats_seq.cpu().numpy()[0], marker='o', linestyle='-', label='Original Symbols')
-    ax2.plot(tx_norm.cpu().numpy()[0], marker='x', linestyle='--', label='Normalized Symbols')
-    ax2.plot(transmitted.cpu().numpy()[0], marker='.', linestyle=':', label='Transmitted Symbols')
+    ax2.plot(tx_symbols.cpu().numpy()[0], marker='o', label='Original Symbols')
+    ax2.plot(rx_symbols.cpu().numpy()[0], marker='x', label='Transmitted Symbols')
     ax2.set_title('Channel Symbols')
-    ax2.legend(['Original Symbols', 'Normalized Symbols', 'Transmitted Symbols'], fontsize=8)
-    ax2.margins(x=0, y=0.05)
+    ax2.legend(['Transmitted Symbols', 'Received Symbols'], fontsize=8)
+    ax2.set_xlabel('Symbol Index')
+    ax2.set_ylabel('Symbol Value')
+    # ax2.margins(x=0, y=0.1)
 
     ax3 = fig.add_subplot(gs[1,0])
-    ax3.imshow(reconstructed)
+    ax3.imshow(reconstructed_img)
     ax3.set_title('Reconstructed Image')
+    ax3.set_xlabel('Width (pixels)')
+    ax3.set_ylabel('Height (pixels)')
 
     ax4 = fig.add_subplot(gs[1,1])
     ax4.plot(dec_symbols.cpu().numpy()[0])
-    ax4.set_title('Reconstructed Features')
+    ax4.set_title('Decoded Features')
+    ax4.set_xlabel('Feature Index')
+    ax4.set_ylabel('Feature Value')
 
     plt.show()
