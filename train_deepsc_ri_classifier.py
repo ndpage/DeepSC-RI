@@ -29,17 +29,14 @@ def train(args):
 
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-
     for epoch in range(args.epochs):
+        pbar = tqdm.tqdm(loader,leave=False)
+        pbar.set_description(f"Epoch {epoch+1}/{args.epochs}: {0:.4f}")
         model.train()
         running_loss = 0.0
         correct = 0
         total = 0
-        for images, labels in tqdm.tqdm(
-            loader,
-            desc=f"Epoch {epoch+1}/{args.epochs}: {running_loss/total if total > 0 else 0:.4f}",
-            leave=False
-            ):
+        for images, labels in pbar:
             images = images.to(device)
             labels = labels.to(device)
 
@@ -53,6 +50,7 @@ def train(args):
             preds = logits.argmax(dim=1)
             correct += (preds == labels).sum().item()
             total += labels.size(0)
+            pbar.set_description(f"Epoch {epoch+1}/{args.epochs}: {running_loss/total:.4f}")
 
         epoch_loss = running_loss / total
         acc = correct / total
