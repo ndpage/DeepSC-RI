@@ -32,7 +32,7 @@ def train(args):
         ])
     print(f"Dataset contains {len(dataset)} images resized to {reduced_size}")
 
-    model = build_deepsc_ri(img_size=reduced_size, patch_size=16)
+    model = build_deepsc_ri(img_size=reduced_size, patch_size=16, channel_dim=args.channel_dim)
     model.set_channel(snr_dB=args.snr, fading=args.fading)
     model.to(device)
     # model.eval()
@@ -40,6 +40,7 @@ def train(args):
     # Research utilizes combination of cross-entropy loss and MSE loss for reconstruction task
     cel = nn.CrossEntropyLoss()
     mse = nn.MSELoss()
+    l1 = nn.L1Loss()
     alpha = 0.1  # weight for MSE loss
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
@@ -60,6 +61,7 @@ def train(args):
             line,  = plt.plot(x, y)
             plt.xlabel("loader iterations")
             plt.ylabel("Loss (log scale)")
+            plt.legend(["Epoch 1"])
 
         for reduced_images, orig_images in pbar:
             desc=f"Epoch {epoch+1}/{args.epochs}: {running_loss/len(loader):.4f}"
@@ -72,10 +74,13 @@ def train(args):
                 plt.gca().relim()
                 plt.gca().autoscale()
                 plt.pause(0.01)
+                if epoch+1 > 1:
+                    line.set_label(f"Epoch {epoch+1}")
+                    plt.legend()
 
             # Send to device
             reduced_images = reduced_images.to(device)
-            orig_images = orig_images.to(device)
+            # orig_images = orig_images.to(device)
 
             optimizer.zero_grad()
             rec_images, intermediates = model(reduced_images)
@@ -89,9 +94,19 @@ def train(args):
             rx_decoded = intermediates['rx_decoded']
 
             # Compute losses according to L_total = L_CE(Iu, ˆI) + α · L_MSE(Tx, Rx),
-            mse_loss = mse(rx_decoded, tx_symbols)
-            ce_loss = cel(rec_images, reduced_images)
-            loss = ce_loss + alpha * mse_loss
+            loss_type = 'ce_mse'  # options: 'ce_mse', 'l1_mse', 'mse'
+            if loss_type == 'ce_mse':
+                mse_loss = mse(rx_decoded, tx_symbols)
+                ce_loss = cel(rec_images, reduced_images)
+                loss = ce_loss + alpha * mse_loss
+            elif loss_type == 'l1_mse':
+                mse_loss = mse(rx_decoded, tx_symbols)
+                l1_loss = l1(rec_images, reduced_images)
+                loss = l1_loss + alpha * mse_loss
+            else:
+                mse_loss = mse(rx_decoded, tx_symbols)
+                loss = mse_loss
+
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
