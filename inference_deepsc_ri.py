@@ -63,7 +63,7 @@ def inference_single_image(args):
     image_tensor, original_img_tensor = ds[args.image_index]
     print(f"Sample: {image_tensor.shape}, Original: {original_img_tensor.shape}")
     
-    model = build_deepsc_ri(img_size=reduced, patch_size=16)
+    model = build_deepsc_ri(img_size=reduced, patch_size=16, channel_dim=args.channel_dim)
     device = get_device()
     
     model.load_state_dict(torch.load(args.model_path, map_location=device))

@@ -92,20 +92,21 @@ def train(args):
             
             tx_symbols = intermediates['tx_symbols']
             rx_decoded = intermediates['rx_decoded']
+            rx_symbols = intermediates['rx_symbols']
 
             loss_type = args.loss_func 
             if loss_type == 'ce_mse':
                 # Compute losses according to L_total = L_CE(Iu, ˆI) + α · L_MSE(Tx, Rx),
-                mse_loss = mse(rx_decoded, tx_symbols)
+                mse_loss = mse(rx_symbols, tx_symbols)
                 ce_loss = cel(rec_images, reduced_images)
                 loss = ce_loss + alpha * mse_loss
             elif loss_type == 'l1_mse':
                 # Compute losses according to L_total = L_L1(Iu, ˆI) + α · L_MSE(Tx, Rx),
-                mse_loss = mse(rx_decoded, tx_symbols)
+                mse_loss = mse(rx_symbols, tx_symbols)
                 l1_loss = l1(rec_images, reduced_images)
                 loss = l1_loss + alpha * mse_loss
             else:
-                mse_loss = mse(rx_decoded, tx_symbols)
+                mse_loss = mse(rx_symbols, tx_symbols)
                 loss = mse_loss
 
             loss.backward()
@@ -119,7 +120,7 @@ def train(args):
         if args.checkpoint_path:
             if not os.path.exists(args.checkpoint_path):
                 os.makedirs(args.checkpoint_path)
-            checkpoint_file = os.path.join(args.checkpoint_path, f'deepsc_ri_epoch{epoch+1}.pth')
+            checkpoint_file = os.path.join(args.checkpoint_path, f'deepsc_ri_epoch{epoch+1}_{args.fading}.pth')
             torch.save(model.state_dict(), checkpoint_file)
 
     if args.save_path:
