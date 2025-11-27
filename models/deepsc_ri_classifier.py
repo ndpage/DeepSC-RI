@@ -73,22 +73,25 @@ class DeepSC_RI_Classifier(nn.Module):
 
         # Channel encode
         symbols = self.channel_encoder(feats)  # [B, channel_dim]
+        # Power normalize
         symbols_norm = self._power_normalize(symbols)
-        transmitted = self._apply_channel(symbols_norm)
+
+
+        rx_symbols = self._apply_channel(symbols_norm)
 
         # Channel decode
-        rec_feats = self.channel_decoder(transmitted)  # [B, 512]
+        dec_output = self.channel_decoder(rx_symbols)  # [B, 512]
 
         # Classification logits
-        logits = self.classifier(rec_feats)  # [B, num_classes]
+        logits = self.classifier(dec_output)  # [B, num_classes]
 
         intermediates = {
             'input': images.detach(),
             'feats': feats.detach(),
             'symbols': symbols.detach(),
             'symbols_norm': symbols_norm.detach(),
-            'transmitted': transmitted.detach(),
-            'rec_feats': rec_feats.detach(),
+            'rx_symbols': rx_symbols.detach(),
+            'dec_output': dec_output.detach(),
             'logits': logits.detach()
         }
         return logits, intermediates
