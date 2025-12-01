@@ -1,12 +1,14 @@
 
 """
-Derived from DeepSC model: https://github.com/13274086/DeepSC.git
+Derived from DeepSC model: https://github.com/13274086/DeepSC.git and based 
+on the paper: [1] X. Peng, Z. Qin, X. Tao, J. Lu, and K. B. Letaief, “A Robust Semantic Communication System for Image Transmission,” in GLOBECOM 2024 - 2024 IEEE Global Communications Conference, 
+    Dec. 2024, pp. 2154-2159. doi: 10.1109/GLOBECOM52923.2024.10901733.
 """
+
 import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-# from torchvision import models
 
 
 class PositionalEncoding(nn.Module):
@@ -306,8 +308,8 @@ class DeepSC_RI(nn.Module):
         self.dropout = 0.1
         self.channel_dim = channel_dim
 
-        fine_patch_size = patch_size
-        coarse_patch_size = patch_size * 2
+        fine_patch_size = self.patch_size
+        coarse_patch_size = self.patch_size * 2
         self.patch_dim = fine_patch_size * fine_patch_size * 3
 
         self.trg_max_len = (img_size[0] // self.patch_size) * (img_size[1] // self.patch_size)  # match fine tokens
@@ -368,7 +370,7 @@ class DeepSC_RI(nn.Module):
         B, C, H, W = images.shape
         
         
-        feats_seq = self.encoder(images, src_mask=None, return_tokens=False)  # [B, src_max_len, d_model]
+        feats_seq = self.encoder(images, src_mask=None)  # [B, src_max_len, d_model]
         feats = feats_seq.mean(dim=1)  # [B, d_model]
 
         # Channel encode
@@ -414,10 +416,10 @@ class DeepSC_RI(nn.Module):
         return recon, intermediates
 
 
-def build_deepsc_ri(img_size=(192, 256), patch_size=16, channel_dim=64) -> DeepSC_RI:
+def build_deepsc_ri(img_size=(960, 1280), patch_size=16, channel_dim=64) -> DeepSC_RI:
     return DeepSC_RI(img_size, patch_size, d_model=64, channel_dim=channel_dim)
+
 if __name__ == "__main__":
     # Simple test to build model
-    model = build_deepsc_ri(img_size=(192, 256), patch_size=16, channel_dim=64)
+    model = build_deepsc_ri(img_size=(960, 1280), patch_size=16, channel_dim=64)
     print(model)
-    
