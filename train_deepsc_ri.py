@@ -141,7 +141,7 @@ if __name__ == "__main__":
     p.add_argument('--save-path', type=str, default='deepsc_ri.pth')
     p.add_argument('--checkpoint-path', type=str, default='checkpoints')
     p.add_argument('--show-graph', action='store_true', help='Show loss graph during training')
-    p.add_argument('--loss-func', type=str, default='ce_mse', choices=['ce_mse', 'l1_mse', 'mse'], help='Loss function to use: ce_mse, l1_mse, mse')
+    p.add_argument('--loss-func', type=str, default='l1_mse', choices=['ce_mse', 'l1_mse', 'mse'], help='Loss function to use: ce_mse, l1_mse, mse')
 
     args = p.parse_args()
     train(args)
