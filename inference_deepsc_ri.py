@@ -30,6 +30,7 @@ def inference(args):
 
     ground_truths = []
     reconstructions = []
+    loss_threshold = 0.1
     with torch.no_grad():
         pbar = tqdm.tqdm(dataset, desc="Inference", leave=False)
         for img, original_img in pbar:
@@ -42,9 +43,10 @@ def inference(args):
             recnst_img, intermediates = model(img)
             # For reconstruction accuracy, we can use MSE between img and recnst_img
             mse_loss = torch.mean((recnst_img - img) ** 2, dim=[1,2,3])
-            recon_error = (mse_loss < 0.1).long()  # threshold for reconstruction success
+            recon_error = (mse_loss < loss_threshold).long()  # threshold for reconstruction success
 
-            correct += recon_error.sum().item()
+            if recon_error.sum().item() > 0:
+                correct += recon_error.sum().item()
             total += img.size(0)
 
             ground_truths.append(img.cpu())
@@ -61,7 +63,6 @@ def inference_single_image(args):
     reduced = (size[0]//2, size[1]//2)
     ds = ReducedImageTrafficLightDataset(root=args.data_root, annotation_csv=args.annotations, size=reduced)
     image_tensor, original_img_tensor = ds[args.image_index]
-    print(f"Sample: {image_tensor.shape}, Original: {original_img_tensor.shape}")
     
     model = build_deepsc_ri(img_size=reduced, patch_size=16, channel_dim=args.channel_dim)
     device = get_device()
