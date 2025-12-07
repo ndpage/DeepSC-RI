@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "deepsc-ri"
 version = "0.1.0"
-description = "DeepSC-RI: Deep Semantic Communication with channel noise simulation"
+description = "DeepSC-RI: Deep Semantic Communication for robust image transmission over noisy channels"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
     {name = "Nathan Page", email = "npage@clemson.edu"}
 ]
-keywords = ["deep learning", "semantic communication", "pytorch", "numerical data"]
+keywords = ["deep learning", "semantic communication", "pytorch", "image transmission", "traffic light", "vision transformer"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
@@ -32,6 +32,7 @@ dependencies = [
     "pandas>=1.5.0",
     "tqdm>=4.60.0",
     "matplotlib>=3.5.0",
+    "pillow>=9.0.0",
 ]
 
 [project.optional-dependencies]
@@ -42,15 +43,8 @@ dev = [
     "mypy>=0.950",
 ]
 
-[project.scripts]
-train-deepsc = "train_deepsc_ri:main"
-infer-deepsc = "inference_deepsc_ri:main"
-inspect-deepsc = "inspect_deepsc_ri:main"
 [tool.setuptools]
-packages = ["models"]
-
-[tool.setuptools.package-data]
-models = ["*.pth"]
+packages = ["models", "utils"]
 
 [tool.black]
 line-length = 120
